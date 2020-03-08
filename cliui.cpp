@@ -94,7 +94,7 @@ namespace {
                     std::istringstream is(line.substr(1));
                     std::size_t n;
                     if ((is >> n) && n < cards.size())
-                        print_card_details(os, *cards[n], player.deck);
+                        print_card_details(os << "        ", *cards[n], player.deck);
                     else
                         os << "    ! Invalid selection.";
                     os << "\n    Selection: " << std::flush;
