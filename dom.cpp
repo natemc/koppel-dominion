@@ -540,7 +540,7 @@ int main(int argc, char* argv[]) {
         {playername   , deck, action_cli   , card_cli    , &cui},
         {"Mr Greedy"  , deck, random_action, go_big      , &bui},
         {"Lord Random", deck, random_action, random_cards, &bui}};
-    Game g{each(L1(&x), players), init_piles(&randgen)};
+    Game g{randgen.shuffle(each(L1(&x), players)), init_piles(&randgen)};
     auto is_over = L0(players.end() != find_if(L1(x.victory_points() >= 20),
                                                players));
 
