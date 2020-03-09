@@ -317,11 +317,10 @@ const Action pirate_ship_trash{
      }
 };
 
-const Action pirate_ship_action{
-    choice_action({pirate_ship_add_coins,
-                   sequence_action({pirate_ship_reveal,
-                                    pirate_ship_trash})})
-};
+const Action pirate_ship_action{choice_action({
+    pirate_ship_add_coins,
+    sequence_action({pirate_ship_reveal, pirate_ship_trash})
+})};
 
 const Action remodel_action = {
     "Trash a card from your hand; gain a card costing up to 2 Coins more than it",
@@ -369,8 +368,8 @@ Action witch_action(const Card& curse) {
 const Action workshop_action = {
     "Gain a card costing up to 4 Coins",
     [](Game& g, Player& p) {
-        auto chosen = choose_card_to_gain(g, p, L1(x->cost <= 4));
-        if (chosen) p.deck.put_on_top(chosen);
+        if (auto chosen = choose_card_to_gain(g, p, L1(x->cost <= 4)))
+            p.deck.put_on_top(chosen);
     }
 };
 
