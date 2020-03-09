@@ -444,7 +444,8 @@ auto choose_random_cards(Random* r) {
                std::size_t                     at_most_)
     {
         const std::size_t at_most = std::min(at_most_, cards.size());
-        assert(at_least_ <= at_most && 0 < at_most);
+        assert(at_least_ <= at_most);
+        if (at_most == 0 || cards.empty()) return cards;
 
         // Doing nothing should be rare
         if (at_least_ == 0 && r->roll(20) == 0)
@@ -462,8 +463,8 @@ auto big_spender(Random* r) {
                std::size_t                     at_most_)
     {
         const std::size_t at_most = std::min(at_most_, cards.size());
-        assert(at_least <= at_most && 0 < at_most);
-        if (cards.empty()) return cards;
+        assert(at_least <= at_most);
+        if (at_most == 0 || cards.empty()) return cards;
 
         // If group changes so that keys are not ordered, the expression
         // to compute by_decreasing_cost must change as well.
