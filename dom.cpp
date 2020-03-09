@@ -340,7 +340,9 @@ const Action throne_room_action = {
         auto actions = filter(L1(x->is(ACTION)), p.deck.hand);
         if (auto card = actions.empty()? nullptr : p.choose_card(g, actions)) {
             p.deck.discard(card);
+            for (auto& o: g.players) o->ui->play(g, p, *card);
             card->action.perform(g, p);
+            for (auto& o: g.players) o->ui->play(g, p, *card);
             card->action.perform(g, p);
         }
     }
