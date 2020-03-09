@@ -80,7 +80,8 @@ namespace {
         os << "    Select from " << at_least << " to " << at_most
                   << " cards [p N for details; s to skip]:\n";
         for (std::size_t i = 0; i < cards.size(); ++i)
-            os << "        " << i << '|' << *cards[i] << '\n';
+            print_card(os << "        " << i << '|', *cards[i], player.deck)
+                << '\n';
         os << "    Selection: " << std::flush;
         std::string line;
         for (;;) {
