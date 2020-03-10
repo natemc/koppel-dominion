@@ -40,9 +40,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 namespace {
-    template <class P>
-    const Card* choose_card_to_gain(Game& g, Player& p, P&& predicate) {
-        auto gainable = filter(std::forward<P>(predicate),
+    template <class C>
+    const Card* choose_card_to_gain(Game& g, Player& p, C&& criteria) {
+        auto gainable = filter(std::forward<C>(criteria),
                                filter(L1(0 < g.piles[x]), key(g.piles)));
         auto chosen = gainable.empty()? nullptr : p.choose_card(g, gainable);
         if (chosen) for (auto& o: g.players) o->ui->gains(g, p, *chosen);
@@ -63,22 +63,45 @@ namespace {
     // discard pile.
     template <class P> // places the gained card
     Action gain_card(const Card* card, const std::string& description, P place) {
-        return Action{description,
-                      [=](Game& g, Player& p){
-                          assert(g.piles.count(card));
-                          if (!g.piles[card]) {
-                              for (auto& o: g.players)
-                                  o->ui->no_more(g, p, *card);
-                          }
-                          else {
-                              --g.piles[card];
-                              place(p, card);
-                              for (auto& o: g.players)
-                                  o->ui->gains(g, p, *card);
-                          }
-                      }
+        return Action{
+            description,
+            [=](Game& g, Player& p){
+                assert(g.piles.count(card));
+                if (!g.piles[card]) {
+                    for (auto& o: g.players) o->ui->no_more(g, p, *card);
+                }
+                else {
+                    --g.piles[card];
+                    place(p, card);
+                    for (auto& o: g.players) o->ui->gains(g, p, *card);
+                }
+            }
         };
     }
+
+    template <class C, class P>
+    Action gain_choice(const std::string& description, C criteria, P place) {
+        return Action{
+            description,
+            [=](Game& g, Player& p) {
+                if (auto chosen = choose_card_to_gain(g, p, criteria))
+                    place(p, chosen);
+            }};
+    }
+
+    // It's not clear to me what the correct behavior is when one of the other
+    // players has only a single card in his or her draw pile.  In this
+    // implementation, the player in question only reveals that single card.
+    // Perhaps they must shuffle their discard pile, put the single card on
+    // top, and then show 2 cards.  This action is used both in Bandit and
+    // Pirate Ship.
+    const Action reveal_top2{
+        "reveals the top 2 cards of their deck",
+        [](Game& g, Player& p) {
+            const auto top2 = take(2, p.deck.draw_pile);
+            for (auto& o: g.players) o->ui->show_cards(g, p, top2);
+        }
+    };
 
     void to_deck(Player& player, const Card* card) {
         player.deck.put_on_top(card);
@@ -86,6 +109,10 @@ namespace {
 
     void to_discard_pile(Player& player, const Card* card) {
         player.deck.discard_pile.push_back(card);
+    }
+
+    void to_hand(Player& player, const Card* card) {
+        player.deck.hand.push_back(card);
     }
 
     template <class P>
@@ -132,10 +159,51 @@ Action add_coins(int n) {
                   [=](Game& g, Player&){ g.turn.coins += n; }};
 }
 
+Action artisan_action{sequence_action({
+    gain_choice("Gain a card to your hand costing up to 5 Coins",
+                LNC1(x->cost <= 5), to_hand),
+    {
+        "Put a card from your hand onto your deck",
+        [](Game& g, Player& p) {
+            if (p.deck.hand.size()) {
+                auto chosen = *std::begin(p.choose_exactly(g, p.deck.hand, 1));
+                p.deck.hand.erase(find(p.deck.hand, chosen));
+                p.deck.put_on_top(chosen);
+            }
+        }
+    }
+})};
+
+Action bandit_action(const Card& gold, const Card& copper) {
+    return sequence_action({
+        gain_card(&gold, "Gain a gold", to_discard_pile),
+        make_others(reveal_top2),
+        make_others({
+            "trashes a revealed Treasure other than Copper, and discards the"
+            " rest",
+            [&](Game& g, Player& p) {
+                auto top2 = take(2, p.deck.draw_pile);
+                const auto non_copper_treasure =
+                    filter(L1(x != &copper && x->is(TREASURE)), top2);
+                if (non_copper_treasure.empty())
+                    p.deck.discard_from_draw_pile(top2);
+                else {
+                    auto chosen = *std::begin(non_copper_treasure.size() == 1? 
+                        non_copper_treasure :
+                        p.choose_exactly(g, non_copper_treasure, 1));
+                    p.deck.trash_from_draw_pile(chosen);
+                    for (auto& o: g.players) o->ui->trash(g, p, {chosen});
+                    top2.erase(find(top2, chosen));
+                    p.deck.discard_from_draw_pile(top2);
+                }
+            }
+    })});
+}
+
 Action bureaucrat_action(const Card& silver) {
     return sequence_action({
         gain_card(&silver, "Gain a silver onto your deck", to_deck),
-        do_to_others({
+        make_others({
             "reveals a Victory card from their hand and puts it onto"
             " their deck (or reveals a hand with no Victory cards)",
             [](Game& g, Player& p) {
@@ -163,7 +231,7 @@ const Action cellar_action = {
 
 const Action council_room_action{sequence_action({
     add_cards(4),
-    do_to_others({"draws a card", [](Game&, Player& p){ p.deck.draw(); }})
+    make_others({"draws a card", [](Game&, Player& p){ p.deck.draw(); }})
 })};
 
 Action descriptive_action(const std::string& description) {
@@ -176,6 +244,22 @@ const Action festival_action{sequence_action({
 
 const Action gardens_action{descriptive_action(
     "Worth VP per 10 cards you have (round down)")};
+
+const Action harbinger_action{sequence_action({
+    add_cards(1), add_actions(1), {
+        "Look through your discard pile.  You may put a card from it onto"
+        " your deck.",
+        [](Game& g, Player& p) {
+            auto& dis = p.deck.discard_pile;
+            if (auto chosen = p.choose_card(g, dis)) {
+                auto it = find(dis, chosen);
+                assert(it != std::end(dis));
+                dis.erase(it);
+                p.deck.put_on_top(chosen);
+            }
+        }
+    }
+})};
 
 const Action laboratory_action{sequence_action({
     add_cards(1), add_actions(1)
@@ -199,9 +283,20 @@ const Action market_action{sequence_action({
     add_cards(1), add_actions(1), add_buys(1), add_coins(1)
 })};
 
+Action merchant_action(const Card& silver) {
+    // I'm cheating by taking advantage of the fact that, if you have a Silver,
+    // you're going to play it (in this implementation).
+    return sequence_action({add_cards(1), add_actions(1), {
+        "The first time you play a Silver this turn, +1 Coin",
+        [&](Game& g, Player& p) {
+            if (find(p.deck.hand, &silver) != std::end(p.deck.hand))
+                ++g.turn.coins;
+        }}});
+}
+
 const Action militia_action{sequence_action({
     add_cards(2),
-    do_to_others({
+    make_others({
         "discards down to 3 cards in hand",
         [](Game& g, Player& p) {
             Deck::Cards& hand = p.deck.hand;
@@ -277,17 +372,6 @@ const Action pirate_ship_add_coins = {
     }
 };
 
-// It's not clear to me what the correct behavior is when one of the other
-// players has only a single card in his or her draw pile.  In this
-// implementation, the player in question only reveals that single card.
-const Action pirate_ship_reveal = do_to_others({
-    "reveals the top 2 cards of their deck",
-    [](Game& g, Player& p) {
-        const auto top2 = take(2, p.deck.draw_pile);
-        for (auto& o: g.players) o->ui->show_cards(g, p, top2);
-    }
-});
-
 // The phrase, "trashes one of those Treasures that you choose," is unclear.
 // The word "those" seems to refer to the revealed cards and so I implemented
 // this so that the instruction to trash only applies when a revealed card is
@@ -319,7 +403,20 @@ const Action pirate_ship_trash{
 
 const Action pirate_ship_action{choice_action({
     pirate_ship_add_coins,
-    sequence_action({pirate_ship_reveal, pirate_ship_trash})
+    sequence_action({make_others(reveal_top2), pirate_ship_trash})
+})};
+
+const Action poacher_discard{
+    "Discard a card per empty Supply pile",
+    [](Game& g, Player& p) {
+        const auto how_many = std::min(p.deck.hand.size(),
+                                       count(filter(L1(0 == x.second), g.piles)));
+        p.deck.discard(p.choose_exactly(g, p.deck.hand, how_many));
+    }
+};
+
+const Action poacher_action{sequence_action({
+    add_cards(1), add_actions(1), add_coins(1), poacher_discard
 })};
 
 const Action remodel_action = {
@@ -332,6 +429,33 @@ const Action remodel_action = {
         }
     }
 };
+
+const Action sentry_action{sequence_action({
+    add_cards(1), add_actions(1), {
+        "Look at the top 2 cards of your deck.  Trash and/or discard any"
+        " number of them.  Put the rest back on top in any order.",
+        [](Game& g, Player& p) {
+            auto top2 = take(2, p.deck.draw_pile);
+            auto to_trash = p.choose_cards(g, top2);
+            if (to_trash.size()) {
+                p.deck.trash_from_draw_pile(to_trash);
+                for (auto& o: g.players) o->ui->trash(g, p, to_trash);
+                for (auto& c: to_trash) top2.erase(find(top2, c));
+            }
+            auto to_discard = p.choose_cards(g, top2);
+            if (to_discard.size()) {
+                p.deck.discard_from_draw_pile(to_discard);
+                for (auto& c: to_discard) top2.erase(find(top2, c));
+            }
+            if (top2.size() == 1) p.deck.put_on_top(*std::begin(top2));
+            if (top2.size() == 2) {
+                auto chosen = *std::begin(p.choose_exactly(g, top2, 1));
+                p.deck.put_on_top(chosen);
+                p.deck.put_on_top(*std::begin(filter(L1(x != chosen), top2)));
+            }
+        }
+    }
+})};
 
 const Action throne_room_action = {
     "You may play an Action card from your hand twice",
@@ -356,22 +480,29 @@ Action trash_action(int n) {
     };
 }
 
+const Action vassal_action{
+    "Discard the top card of your deck.  If it's an Action card, you may play it.",
+    [](Game& g, Player& p) {
+        const Card* const card = p.deck.next();
+        p.deck.discard_pile.push_back(card);
+        if (card->is(ACTION)) {
+            if (auto chosen = p.choose_card(g, {card}))
+                chosen->action.perform(g, p);
+        }
+    }
+};
+
 const Action village_action{sequence_action({add_cards(1), add_actions(2)})};
 
 Action witch_action(const Card& curse) {
     return sequence_action({
         add_cards(2),
-        do_to_others(gain_card(&curse, "gains a Curse", to_discard_pile))
+        make_others(gain_card(&curse, "gains a Curse", to_discard_pile))
     });
 }
 
-const Action workshop_action = {
-    "Gain a card costing up to 4 Coins",
-    [](Game& g, Player& p) {
-        if (auto chosen = choose_card_to_gain(g, p, L1(x->cost <= 4)))
-            p.deck.put_on_top(chosen);
-    }
-};
+const Action workshop_action{gain_choice(
+    "Gain a card costing up to 4 Coins", LNC1(x->cost <= 4), to_deck)};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Cards
@@ -392,6 +523,8 @@ const Card province      (nop_action                 , "Province"      , 8, 0, 6
 // dominion.games allows you to buy a curse card and it does just what this does.
 const Card curse         (nop_action                 , "Curse"         , 0, 0,-1, {CURSE});
 
+const Card artisan       (artisan_action             , "Artisan"       , 6, 0, 0, {ACTION});
+const Card bandit        (bandit_action(gold, copper), "Bandit"        , 5, 0, 0, {ACTION,ATTACK});
 const Card bureaucrat    (bureaucrat_action(silver)  , "Bureaucrat"    , 4, 0, 0, {ACTION,ATTACK});
 const Card cellar        (cellar_action              , "Cellar"        , 2, 0, 0, {ACTION});
 const Card chapel        (trash_action(4)            , "Chapel"        , 2, 0, 0, {ACTION});
@@ -400,27 +533,34 @@ const Card council_room  (council_room_action        , "Council Room"  , 5, 0, 0
 const Card festival      (festival_action            , "Festival"      , 5, 0, 0, {ACTION});
 const Card gardens       (gardens_action             , "Gardens"       , 4, 0, gardens_vp,
                                                                                   {VICTORY});
+const Card harbinger     (harbinger_action           , "Harbinger"     , 3, 0, 0, {ACTION});
 const Card laboratory    (laboratory_action          , "Laboratory"    , 5, 0, 0, {ACTION});
 const Card library       (library_action             , "Library"       , 5, 0, 0, {ACTION});
 const Card market        (market_action              , "Market"        , 5, 0, 0, {ACTION});
+const Card merchant      (merchant_action(silver)    , "Merchant"      , 3, 0, 0, {ACTION});
 const Card militia       (militia_action             , "Militia"       , 4, 0, 0, {ACTION,ATTACK});
 const Card mine          (mine_action                , "Mine"          , 5, 0, 0, {ACTION});
 const Card moat          (moat_action                , "Moat"          , 2, 0, 0, {ACTION,REACTION});
 const Card money_lender  (money_lender_action(copper), "Money Lender"  , 4, 0, 0, {ACTION});
 const Card native_village(native_village_action      , "Native Village", 2, 0, 0, {ACTION});
 const Card pirate_ship   (pirate_ship_action         , "Pirate Ship"   , 4, 0, 0, {ACTION,ATTACK});
+const Card poacher       (poacher_action             , "Poacher"       , 4, 0, 0, {ACTION});
 const Card remodel       (remodel_action             , "Remodel"       , 4, 0, 0, {ACTION});
+const Card sentry        (sentry_action              , "Sentry"        , 5, 0, 0, {ACTION});
 const Card smithy        (add_cards(3)               , "Smithy"        , 4, 0, 0, {ACTION});
 const Card throne_room   (throne_room_action         , "Throne Room"   , 4, 0, 0, {ACTION});
+const Card vassal        (vassal_action              , "Vassal"        , 3, 0, 0, {ACTION});
 const Card village       (village_action             , "Village"       , 3, 0, 0, {ACTION});
 const Card witch         (witch_action(curse)        , "Witch"         , 5, 0, 0, {ACTION,ATTACK});
 const Card workshop      (workshop_action            , "Workshop"      , 3, 0, 0, {ACTION});
 
 const Card* const center_pile_cards[] = {
-    &bureaucrat , &cellar      , &chapel      , &council_room, &festival,
-    &gardens    , &laboratory  , &library     , &market      , &militia,
-    &mine       , &moat        , &money_lender, &remodel     , &smithy, 
-    &throne_room, &village     , &witch       , &workshop
+    &artisan     , &bandit      , &bureaucrat    , &cellar     , &chapel    ,
+    &council_room, &festival    , &gardens       , &harbinger  , &laboratory,
+    &library     , &market      , &merchant      , &militia    , &mine      ,
+    &moat        , &money_lender, &native_village, &pirate_ship, &poacher   ,
+    &remodel     , &sentry      , &smithy        , &throne_room, &vassal    ,
+    &village     , &witch       , &workshop
 };
 
 ////////////////////////////////////////////////////////////////////////////////
