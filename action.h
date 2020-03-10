@@ -26,7 +26,7 @@ struct Action {
 };
 
 Action choice_action  (std::initializer_list<Action> actions);
-Action do_to_others   (Action                        action );
+Action make_others    (Action                        action );
 Action sequence_action(std::initializer_list<Action> actions);
 
 std::ostream& operator<<(std::ostream& os, const Action& a);

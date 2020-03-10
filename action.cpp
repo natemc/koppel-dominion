@@ -32,7 +32,7 @@ Action sequence_action(std::initializer_list<Action> alist) {
                   }};
 }
 
-Action do_to_others(Action action) {
+Action make_others(Action action) {
     std::ostringstream os;
     os << "Each other player " << action.description;
     return Action{os.str(), [=](Game& g, Player& p) {
