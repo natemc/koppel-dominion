@@ -529,7 +529,6 @@ const Card bureaucrat    (bureaucrat_action(silver)  , "Bureaucrat"    , 4, 0, 0
 const Card cellar        (cellar_action              , "Cellar"        , 2, 0, 0, {ACTION});
 const Card chapel        (trash_action(4)            , "Chapel"        , 2, 0, 0, {ACTION});
 const Card council_room  (council_room_action        , "Council Room"  , 5, 0, 0, {ACTION});
-                       
 const Card festival      (festival_action            , "Festival"      , 5, 0, 0, {ACTION});
 const Card gardens       (gardens_action             , "Gardens"       , 4, 0, gardens_vp,
                                                                                   {VICTORY});
@@ -710,15 +709,15 @@ int main(int argc, char* argv[]) {
         for (auto& c: treasures) {
             g.turn.played = c;
             for (auto& o: g.players) o->ui->play(g, p, *c);
+            g.turn.coins += c->treasure_points;
         }
-        int coins = sum(each(L1(x->treasure_points), treasures));
-        while (coins && g.turn.buys && g.affordable(coins).size()) {
-            const Card* const bought = p.ui->choose_buy(g, coins);
+        while (g.turn.coins && g.turn.buys && g.affordable().size()) {
+            const Card* const bought = p.ui->choose_buy(g, g.turn.coins);
             if (!bought) break;
             for (auto& o: g.players) o->ui->buy(g, p, *bought);
             p.deck.discard_pile.push_back(bought);
             g.remove_card_from_piles(bought);
-            coins -= bought->cost;
+            g.turn.coins -= bought->cost;
             --g.turn.buys;
         }
         p.deck.end_turn();

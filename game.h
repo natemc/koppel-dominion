@@ -18,7 +18,11 @@ struct Game {
     Game(std::vector<Player*>       players_,
          std::map<const Card*, int> piles_);
 
-    std::vector<const Card*> affordable            (int coins)   const;
+    std::vector<const Card*> affordable() const {
+        return affordable(turn.coins);
+    }
+
+    std::vector<const Card*> affordable            (int coins) const;
     void                     init_turn             (Player& p);
     void                     remove_card_from_piles(const Card*);
 
