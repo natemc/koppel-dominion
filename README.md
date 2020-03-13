@@ -91,34 +91,41 @@ const Card duchy         (nop_action                 , "Duchy"         , 5, 0, 3
 const Card estate        (nop_action                 , "Estate"        , 2, 0, 1, {VICTORY});
 const Card province      (nop_action                 , "Province"      , 8, 0, 6, {VICTORY});
                                                                                 
+// dominion.games allows you to buy a curse card and it does just what this does.
 const Card curse         (nop_action                 , "Curse"         , 0, 0,-1, {CURSE});
                                                                                 
+const Card artisan       (artisan_action             , "Artisan"       , 6, 0, 0, {ACTION});
+const Card bandit        (bandit_action(gold, copper), "Bandit"        , 5, 0, 0, {ACTION,ATTACK});
 const Card bureaucrat    (bureaucrat_action(silver)  , "Bureaucrat"    , 4, 0, 0, {ACTION,ATTACK});
 const Card cellar        (cellar_action              , "Cellar"        , 2, 0, 0, {ACTION});
 const Card chapel        (trash_action(4)            , "Chapel"        , 2, 0, 0, {ACTION});
 const Card council_room  (council_room_action        , "Council Room"  , 5, 0, 0, {ACTION});
-                                                                                
 const Card festival      (festival_action            , "Festival"      , 5, 0, 0, {ACTION});
 const Card gardens       (gardens_action             , "Gardens"       , 4, 0, gardens_vp,
                                                                                   {VICTORY});
+const Card harbinger     (harbinger_action           , "Harbinger"     , 3, 0, 0, {ACTION});
 const Card laboratory    (laboratory_action          , "Laboratory"    , 5, 0, 0, {ACTION});
 const Card library       (library_action             , "Library"       , 5, 0, 0, {ACTION});
 const Card market        (market_action              , "Market"        , 5, 0, 0, {ACTION});
+const Card merchant      (merchant_action(silver)    , "Merchant"      , 3, 0, 0, {ACTION});
 const Card militia       (militia_action             , "Militia"       , 4, 0, 0, {ACTION,ATTACK});
 const Card mine          (mine_action                , "Mine"          , 5, 0, 0, {ACTION});
 const Card moat          (moat_action                , "Moat"          , 2, 0, 0, {ACTION,REACTION});
 const Card money_lender  (money_lender_action(copper), "Money Lender"  , 4, 0, 0, {ACTION});
 const Card native_village(native_village_action      , "Native Village", 2, 0, 0, {ACTION});
 const Card pirate_ship   (pirate_ship_action         , "Pirate Ship"   , 4, 0, 0, {ACTION,ATTACK});
+const Card poacher       (poacher_action             , "Poacher"       , 4, 0, 0, {ACTION});
 const Card remodel       (remodel_action             , "Remodel"       , 4, 0, 0, {ACTION});
+const Card sentry        (sentry_action              , "Sentry"        , 5, 0, 0, {ACTION});
 const Card smithy        (add_cards(3)               , "Smithy"        , 4, 0, 0, {ACTION});
 const Card throne_room   (throne_room_action         , "Throne Room"   , 4, 0, 0, {ACTION});
+const Card vassal        (vassal_action              , "Vassal"        , 3, 0, 0, {ACTION});
 const Card village       (village_action             , "Village"       , 3, 0, 0, {ACTION});
 const Card witch         (witch_action(curse)        , "Witch"         , 5, 0, 0, {ACTION,ATTACK});
 const Card workshop      (workshop_action            , "Workshop"      , 3, 0, 0, {ACTION});
 ```
 
-This set includes the cards from the game's first Base edition (that were not subsequently removed in the second edition) plus `Native Village` and `Pirate Ship` from the Seaside edition.  Those last two were added at Jimmy's suggestion since he knew that they would require a lot of work :-).
+This set includes the cards from the game's Base set (2nd edition) plus `Native Village` and `Pirate Ship` from the Seaside edition.  Those last two were added at Jimmy's suggestion since he knew that they would require a lot of work :-).
 
 A game pits a single human player against two bots (Mr Greedy, who's not that smart, and Lord Random, who is even less so).  The first player to reach 20 victory points wins.
 
@@ -133,7 +140,7 @@ const Action workshop_action = {
     }
 };
 ```
-More complex actions can often be built out of other actions using the factory functions (declared in `action.h`) `sequence_action`, `choice_action`, and `do_to_others`:
+More complex actions can often be built out of other actions using the factory functions (declared in `action.h`) `sequence_action`, `choice_action`, and `make_others`:
 ```
 const Action festival_action{sequence_action({
     add_actions(2), add_buys(1), add_coins(2)
@@ -147,7 +154,7 @@ const Action pirate_ship_action{choice_action({
 Action witch_action(const Card& curse) {                                        
     return sequence_action({                                                    
         add_cards(2),                                                           
-        do_to_others(gain_card(&curse, "gains a Curse", to_discard_pile))       
+        make_others(gain_card(&curse, "gains a Curse", to_discard_pile))       
     });                                                                         
 }
 ```
@@ -385,8 +392,29 @@ If you want to resign early, just press `Ctrl-D` to close stdin.
 ### Testing
 I'm confident I wrote a few bugs (several hundred LOC per day, what could go wrong?).  Though time-consuming, adding unit tests would not be difficult.  If I do decide to grow the implementation, it would be well worth the investment to put automated testing in place first.
 
-### More Cards
-With only seven more cards, I'd have a complete implementation of the game's Base edition as currently defined.  Some of those seven cards will require design changes.  Since those sorts of design issues are the point of the exercise, I'd like to look at these.
+### The State Debate
+To support the `Native Village` and `Pirate Ship` cards, I added mats to the `Player` class.  The rules for those (and related) cards consistently refer to *your* mat, i.e., the mat belonging to the player playing the card.  To me, it seemed natural and convenient to make `mats` a member of `Player`.
+
+Some folks, including Jimmy, felt this was polluting the `Player` class.  After all, most dominion games don't include these mats.  The mats are a place to store state related to a certain constellation of cards that are part of specific expansion packs, but my `Player` class carries around a vestigial collection of mats no matter what.
+
+Considering this perspective for a few days, I believe this is a valid complaint.  If we were trying to design a generic card-game framework, its `Player` class wouldn't have a notion of mats.  Besides, the original concept of a card game player as just some cards and a brain is very appealing.
+
+It isn't clear, however, what the correct alternative design is.  Here are a few possibilities:
+
+1. We introduce an inheritance hierarchy below `Player`.  Different subclasses are instantiated depending on the rule set / expansion packs being used in a particular match.  Each subclass may add data members for any state needed for that set of rules.  This leads to downcasting somewhere - or a template-based approach in which every type is a family of types and every possible combination is stamped out at compile time.
+2. The `Player` class has some loose manner (e.g., map<string, any>) to store state.  Some convention would be established for code to work with this state.  This may not be different enough from the current solution to satisfy the mat haters, and I think it would be more error prone than the current solution.
+3. The actions for the relevant cards close over the state they share.  This approach leaves the problem of how to present this state to the user.  In dominion, a player may inspect the contents of his or her mats at any time (but not the contents of other players' mats).  Making state stored in actions available to the UI would be messy.
+
+### Events
+When I claimed above that I implemented the Base (2nd edition) set of cards, I elided one little detail.  My implementation of the `Merchant` card does not behave as specified by the rules of the game, which state, "The first time you play a Silver this turn, +1 Coin."  Implementing this per the spec would mean that the game would need to trigger actions during the buy phase, which my implementation never does.  Moreover, this action (+1 Coin), though triggered by the playing of a card, is triggered by the playing of a card *other than the one requiring the action to take place*.
+
+Time was short.  I consoled myself with the notion that anyone playing the `Merchant` card would surely follow it by playing a `Silver` card - if one was in his or her hand.  So, in this implementation, when you play a `Merchant` card, the game checks to see if you have any `Silver` cards in your hand; if you do, you get a coin immediately.  Who, when faced with this situation (except perhaps Lord Random), would not play a `Silver` card, and thereby gain the extra coin?
+
+Someone, for example, who drew a `Mine` card due to the +1 Card feature of playing the `Merchant` card.  Such a player might well then use the additional action gained by playing the `Merchant` card to upgrade that `Silver` to a `Gold`.
+
+Moreover, it is also possible to play a `Merchant` card when there are no `Silver` cards in your hand.  It is possible the player subsequently plays an action card the leads to the player holding a `Silver` card.
+
+I could fix this particular situation with a particular solution, i.e., a hack.  But some expansion packs include other cards (such as http://wiki.dominionstrategy.com/index.php/Horse_Traders and http://wiki.dominionstrategy.com/index.php/Enchantress) that have effects after the current player's turn ends.  This suggests we need a general way to schedule actions in the future.  I would need to study the list of extant cards carefully to handle all the conditions under which such actions may be triggered.  Then Jimmy or one of my fellow students would invent a new card that would break my design, but I can live with that.
 
 ### Client-Server
 This would make a fun challenge.  Maybe one of my friends who writes phone apps would write a mobile client.
