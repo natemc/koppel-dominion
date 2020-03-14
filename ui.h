@@ -8,6 +8,7 @@
 // terrible.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <string>
 #include <vector>
 
 struct Card;
@@ -27,6 +28,7 @@ struct UI {
     virtual void        end_game       (const Game&)                              = 0;
     virtual void        gains          (const Game&, const Player&, const Card& ) = 0;
     virtual void        no_more        (const Game&, const Player&, const Card& ) = 0;
+    virtual void        notify   (const Game&, const Player&, const std::string&) = 0;
     virtual void        play           (const Game&, const Player&, const Card& ) = 0;
     virtual void        react          (const Game&, const Player&, const Card& ) = 0;
     virtual void        show_cards     (const Game&, const Player&, const Cards&) = 0;

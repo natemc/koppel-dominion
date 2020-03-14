@@ -74,7 +74,7 @@ namespace {
                             std::size_t                     at_most_)
     {
         const std::size_t at_most = std::min(at_most_, cards.size());
-        assert(at_least <= at_most && 0 < at_most && at_most <= cards.size());
+        assert(at_least <= at_most && at_most <= cards.size());
 
         if (at_least == cards.size()) return cards;
         os << "    Select from " << at_least << " to " << at_most
@@ -229,6 +229,10 @@ void CliUI::gains(const Game& g, const Player& p, const Card& c) {
 void CliUI::no_more(const Game& g, const Player& p, const Card& c) {
     print_card(os << dred << "    ! There are no more ", c, p.deck)
         << " cards" << reset << '\n';
+}
+
+void CliUI::notify(const Game&, const Player& p, const std::string& s) {
+    os << "    " << p.name << ": " << s << '\n';
 }
 
 void CliUI::play(const Game& g, const Player& p, const Card& c) {

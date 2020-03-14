@@ -34,6 +34,9 @@ void BotUI::gains(const Game& g, const Player& p, const Card& c) {
 void BotUI::no_more(const Game&, const Player&, const Card&) {
 }
 
+void BotUI::notify(const Game&, const Player&, const std::string&) {
+}
+
 void BotUI::play(const Game&, const Player&, const Card&) {
 }
 

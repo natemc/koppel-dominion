@@ -18,6 +18,7 @@ struct BotUI: UI {
     void        end_game       (const Game&)                              override;
     void        gains          (const Game&, const Player&, const Card& ) override;
     void        no_more        (const Game&, const Player&, const Card& ) override;
+    void        notify   (const Game&, const Player&, const std::string&) override;
     void        play           (const Game&, const Player&, const Card& ) override;
     void        react          (const Game&, const Player&, const Card& ) override;
     void        show_cards     (const Game&, const Player&, const Cards&) override;
