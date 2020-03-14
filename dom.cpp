@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <deck.h>
 #include <each.h>
+#include <event.h>
 #include <filter.h>
 #include <find.h>
 #include <find_if.h>
@@ -251,6 +252,7 @@ const Action harbinger_action{sequence_action({
         " your deck.",
         [](Game& g, Player& p) {
             auto& dis = p.deck.discard_pile;
+            std::cout << "!!!!\n";
             if (auto chosen = p.choose_card(g, dis)) {
                 auto it = find(dis, chosen);
                 assert(it != std::end(dis));
@@ -283,14 +285,27 @@ const Action market_action{sequence_action({
     add_cards(1), add_actions(1), add_buys(1), add_coins(1)
 })};
 
+Event merchant_event(int turn, const Card& silver) {
+    std::ostringstream os;
+    os << "[Merchant] The first time you play a Silver this turn ("
+       << turn << "), +1 Coin";
+    return Event{
+        os.str(),
+        [=](const Game& g){ return turn < g.turn.count; },
+        [&](const Game& g){ return g.turn.played == &silver; },
+        [ ](Game&       g){ ++g.turn.coins; }
+    };    
+}
+
 Action merchant_action(const Card& silver) {
     // I'm cheating by taking advantage of the fact that, if you have a Silver,
     // you're going to play it (in this implementation).
     return sequence_action({add_cards(1), add_actions(1), {
         "The first time you play a Silver this turn, +1 Coin",
         [&](Game& g, Player& p) {
-            if (find(p.deck.hand, &silver) != std::end(p.deck.hand))
-                ++g.turn.coins;
+              g.schedule(merchant_event(g.turn.count, silver));
+//            if (find(p.deck.hand, &silver) != std::end(p.deck.hand))
+//                ++g.turn.coins;
         }}});
 }
 
@@ -436,22 +451,28 @@ const Action sentry_action{sequence_action({
         " number of them.  Put the rest back on top in any order.",
         [](Game& g, Player& p) {
             auto top2 = take(2, p.deck.draw_pile);
+            p.ui->notify(g, p, "Which cards would you like to trash?");
             auto to_trash = p.choose_cards(g, top2);
             if (to_trash.size()) {
                 p.deck.trash_from_draw_pile(to_trash);
                 for (auto& o: g.players) o->ui->trash(g, p, to_trash);
                 for (auto& c: to_trash) top2.erase(find(top2, c));
             }
-            auto to_discard = p.choose_cards(g, top2);
-            if (to_discard.size()) {
-                p.deck.discard_from_draw_pile(to_discard);
-                for (auto& c: to_discard) top2.erase(find(top2, c));
-            }
-            if (top2.size() == 1) p.deck.put_on_top(*std::begin(top2));
-            if (top2.size() == 2) {
-                auto chosen = *std::begin(p.choose_exactly(g, top2, 1));
-                p.deck.put_on_top(chosen);
-                p.deck.put_on_top(*std::begin(filter(L1(x != chosen), top2)));
+            if (to_trash.size() < 2) {
+                p.ui->notify(g, p, "Which cards would you like to discard?");
+                auto to_discard = p.choose_cards(g, top2);
+                if (to_discard.size()) {
+                    p.deck.discard_from_draw_pile(to_discard);
+                    for (auto& c: to_discard) top2.erase(find(top2, c));
+                }
+                if (top2.size() == 1) p.deck.put_on_top(*std::begin(top2));
+                if (top2.size() == 2) {
+                    p.ui->notify(g, p,
+                                 "Which card do you want to put on top first?");
+                    auto chosen = *std::begin(p.choose_exactly(g, top2, 1));
+                    p.deck.put_on_top(chosen);
+                    p.deck.put_on_top(*std::begin(filter(L1(x != chosen), top2)));
+                }
             }
         }
     }
@@ -462,7 +483,7 @@ const Action throne_room_action = {
     [](Game& g, Player& p) {
         auto actions = filter(L1(x->is(ACTION)), p.deck.hand);
         if (auto card = actions.empty()? nullptr : p.choose_card(g, actions)) {
-            p.deck.discard(card);
+            p.deck.play(card);
             for (auto& o: g.players) o->ui->play(g, p, *card);
             card->action.perform(g, p);
             for (auto& o: g.players) o->ui->play(g, p, *card);
@@ -688,6 +709,7 @@ int main(int argc, char* argv[]) {
         Player& p = **it;
         g.init_turn(p);
         for (auto& o: g.players) o->ui->begin_turn(g, *o);
+        g.process_events();
 
         while (filter(L1(x->is(ACTION)), p.deck.hand).size() && g.turn.actions) {
             const Card* const action = p.ui->choose_action(g);
@@ -695,9 +717,10 @@ int main(int argc, char* argv[]) {
             g.turn.played = action;
             // It is critical for some actions that the played card is
             // removed from the player's hand before the action happens.
-            p.deck.discard(action);
+            p.deck.play(action);
             for (auto& o: g.players) o->ui->play(g, p, *action);
             (action->action).perform(g, p);
+            g.process_events();
             p.ui->complete_action(g);
             --g.turn.actions;
         }
@@ -708,8 +731,10 @@ int main(int argc, char* argv[]) {
         auto treasures = filter(L1(x->is(TREASURE)), p.deck.hand);
         for (auto& c: treasures) {
             g.turn.played = c;
+            p.deck.play(c);
             for (auto& o: g.players) o->ui->play(g, p, *c);
             g.turn.coins += c->treasure_points;
+            g.process_events();
         }
         while (g.turn.coins && g.turn.buys && g.affordable().size()) {
             const Card* const bought = p.ui->choose_buy(g, g.turn.coins);
@@ -721,6 +746,7 @@ int main(int argc, char* argv[]) {
             --g.turn.buys;
         }
         p.deck.end_turn();
+        g.process_events();
         if (++it == std::end(g.players)) it = std::begin(g.players);
     }
     for (auto& p: g.players) p->ui->end_game(g);
