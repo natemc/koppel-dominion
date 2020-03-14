@@ -39,17 +39,6 @@ void Deck::discard_from_draw_pile(const Cards& cards) {
     discard_from(draw_pile, cards);
 }
 
-const Card* Deck::next() {
-    if (draw_pile.empty()) {
-        if (discard_pile.empty()) return nullptr;
-        draw_pile = gen->shuffle(discard_pile);
-        discard_pile.clear();
-    }
-    const Card* const card = draw_pile.back();
-    draw_pile.pop_back();
-    return card;
-}
-
 void Deck::draw(int n) {
     assert(0 <= n);
 
@@ -66,7 +55,24 @@ void Deck::end_turn() {
     draw_pile = gen->shuffle(whole());
     discard_pile.clear();
     hand.clear();
+    in_play.clear();
     draw(5);
+}
+
+const Card* Deck::next() {
+    if (draw_pile.empty()) {
+        if (discard_pile.empty()) return nullptr;
+        draw_pile = gen->shuffle(discard_pile);
+        discard_pile.clear();
+    }
+    const Card* const card = draw_pile.back();
+    draw_pile.pop_back();
+    return card;
+}
+
+void Deck::play(const Card* card) {
+    trash_from(hand, card);
+    in_play.push_back(card);
 }
 
 void Deck::put_on_top(const Card* card) {
@@ -112,7 +118,7 @@ int Deck::victory_points() const {
 }
 
 Deck::Cards Deck::whole() const {
-    return over(concat, {draw_pile, discard_pile, hand});
+    return over(concat, {draw_pile, discard_pile, hand, in_play});
 }
 
 std::ostream& operator<<(std::ostream& os, const Deck& deck) {

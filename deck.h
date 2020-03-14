@@ -24,6 +24,7 @@ struct Deck {
     void        draw                  (int n=1);      // draw -> hand
     void        end_turn              ();             // all  -> draw & draw 5
     const Card* next                  ();             // draw -> return
+    void        play                  (const Card*);  // hand -> play
     void        put_on_top            (const Card*);  // arg  -> draw
     void        put_on_top            (const Cards&); // arg  -> draw
     void        trash                 (const Card*);  // hand -> gone
@@ -38,6 +39,7 @@ struct Deck {
     Cards discard_pile;
     Cards draw_pile;
     Cards hand;
+    Cards in_play;
 
 private:
     Random* gen;
