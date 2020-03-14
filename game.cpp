@@ -1,4 +1,5 @@
 #include <game.h>
+#include <algorithm>
 #include <count.h>
 #include <each.h>
 #include <filter.h>
@@ -8,12 +9,14 @@
 #include <iterator>
 #include <lambda.h>
 #include <max.h>
+#include <ui.h>
 #include <utility>
 
 Game::Game(std::vector<Player*>       players_,
            std::map<const Card*, int> piles_):
     players(std::move(players_)), piles(std::move(piles_))
 {
+    turn.count = 0;
 }
 
 std::vector<const Card*> Game::affordable(int coins) const {
@@ -23,12 +26,25 @@ std::vector<const Card*> Game::affordable(int coins) const {
 }
 
 void Game::init_turn(Player& p) {
+    ++turn.count;
     turn.actions = 1;
     turn.buys    = 1;
     turn.coins   = 0;
     turn.phase   = Turn::ACTION;
     turn.played  = nullptr;
     turn.player  = &p;
+}
+
+void Game::process_events() {
+    events.erase(std::remove_if(events.begin(), events.end(), L1(x.expire(*this))),
+                 events.end());
+    auto to_fire = filter(L1(x.trigger(*this)), events);
+    events.erase(std::remove_if(events.begin(), events.end(), L1(x.trigger(*this))),
+                 events.end());
+    for (Event& e: to_fire) {
+        for (auto& p: players) p->ui->notify(*this, *turn.player, e.description);
+        e.fire(*this);
+    }
 }
 
 void Game::remove_card_from_piles(const Card* card) {
@@ -38,6 +54,17 @@ void Game::remove_card_from_piles(const Card* card) {
     // We need to retain the pile with a count of zero, because certain cards
     // (e.g., Poacher) depend on it.
     --it->second;
+}
+
+void Game::schedule(Event e) {
+    events.push_back(std::move(e));
+}
+
+void Game::schedule(std::vector<Event> e) {
+    events.reserve(events.size() + e.size());
+    std::copy(std::make_move_iterator(std::begin(e)),
+              std::make_move_iterator(std::end  (e)),
+              std::back_inserter(events));
 }
 
 std::ostream& operator<<(std::ostream& os, const Game& g) {

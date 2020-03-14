@@ -8,6 +8,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <card.h>
+#include <event.h>
 #include <iosfwd>
 #include <map>
 #include <player.h>
@@ -24,8 +25,12 @@ struct Game {
 
     std::vector<const Card*> affordable            (int coins) const;
     void                     init_turn             (Player& p);
+    void                     process_events        ();
     void                     remove_card_from_piles(const Card*);
+    void                     schedule              (Event);
+    void                     schedule              (std::vector<Event>);
 
+    std::vector<Event>         events;
     std::vector<Player*>       players;
     std::map<const Card*, int> piles;
     Turn                       turn;
