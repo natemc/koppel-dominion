@@ -20,6 +20,7 @@ struct Turn {
     int                        actions;
     int                        buys;
     int                        coins;
+    int                        count;
     enum Phase { ACTION, BUY } phase;
     const Card*                played;
     Player*                    player;

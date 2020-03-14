@@ -4,7 +4,8 @@
 #include <player.h>
 
 std::ostream& operator<<(std::ostream& os, const Turn& turn) {
-    os << "    " << turn.player->name << "'s turn (" << turn.phase << " phase) "
+    os << '(' << turn.count << ") " << turn.player->name
+       << "'s turn (" << turn.phase << " phase) "
        << turn.actions << " actions, " << turn.buys << " buys, "
        << turn.coins << " coins";
     if (turn.played) os << "; just played " << *turn.played;
