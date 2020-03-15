@@ -8,7 +8,6 @@
 // function may contain its own mutable state).
 // Factory functions for common use cases are provided:
 //   choice_action
-//   do_to_others
 //   sequence_action
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -16,17 +15,21 @@
 #include <initializer_list>
 #include <iosfwd>
 #include <string>
+#include <vector>
 
+struct Card;
 struct Game;
 struct Player;
 
 struct Action {
-    std::string                         description;
-    std::function<void(Game&, Player&)> perform;
+    Action(std::string, std::function<void(Game&, Player&)>);
+    Action(std::string, std::function<void(Game&, Player&, const Card*)>);
+    void operator()(Game&, Player&, const Card*) const;
+    std::string                                      description;
+    std::function<void(Game&, Player&, const Card*)> perform;
 };
 
 Action choice_action  (std::initializer_list<Action> actions);
-Action make_others    (Action                        action );
 Action sequence_action(std::initializer_list<Action> actions);
 
 std::ostream& operator<<(std::ostream& os, const Action& a);
