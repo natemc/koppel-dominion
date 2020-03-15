@@ -11,16 +11,14 @@
 
 const struct Sort {
     template <class X, class C>
-    X operator()(const X& x) const {
-        X r(x);
-        std::sort(std::begin(r), std::end(r));
-        return r;
+    X operator()(X x) const {
+        std::sort(std::begin(x), std::end(x));
+        return x;
     }
 
     template <class X, class C>
-    X operator()(const X& x, C&& cmp) const {
-        X r(x);
-        std::sort(std::begin(r), std::end(r), std::forward<C>(cmp));
-        return r;
+    X operator()(X x, C&& cmp) const {
+        std::sort(std::begin(x), std::end(x), std::forward<C>(cmp));
+        return x;
     }
 } sort;
