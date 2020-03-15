@@ -146,7 +146,7 @@ namespace {
 
     const char dred   [] = "\033[37;48;5;88m";
     const char lblue  [] = "\033[30;48;5;195m";
-    const char lgray  [] = "\033[30;48;5;254m";
+    const char lgray  [] = "\033[30;48;5;255m";
     const char lgreen [] = "\033[30;48;5;193m";
     const char lorange[] = "\033[30;48;5;202m";
     const char lpurple[] = "\033[30;48;5;201m";
@@ -175,8 +175,14 @@ void CliUI::begin_game(const Game& g) {
 void CliUI::begin_turn(const Game& g, const Player& self) {
     const Player& p = *g.turn.player;
     os << p.name << "'s (" << p.victory_points() << "VP) turn";
-    if (&self == &p)
+    if (&self != &p) {
+        os << " - " << p.deck.hand.size() << " cards in hand";
+    }
+    else {
         print_hand(os << ": ", p.deck);
+        if (p.deck.aside.size())
+            print_cards(os << " [ASIDE: ", p.deck.aside, p.deck) << ']';
+    }
     os << '\n';
 }
 
@@ -244,9 +250,10 @@ void CliUI::play(const Game& g, const Player& p, const Card& c) {
     os << '\n';
 }
 
-void CliUI::react(const Game& g, const Player& p, const Card& blocker) {
-    os << lgray << "    " << p.name << " blocked attack with ";
-    print_card(os, blocker, p.deck) << reset << '\n';
+void CliUI::react(const Game& g, const Player& p, const Card& reaction) {
+    os << lgray << "    " << p.name << ' '
+       << (reaction.is(BLOCK)? "blocked" : "reacted to") << " attack with ";
+    print_card(os, reaction, p.deck) << reset << '\n';
 }
 
 void CliUI::show_cards(const Game& g, const Player& p, const Cards& cards) {
