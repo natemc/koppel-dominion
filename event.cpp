@@ -1,6 +1,9 @@
 #include <event.h>
+#include <card.h>
 #include <iostream>
 
 std::ostream& operator<<(std::ostream& os, const Event& e) {
-    return os << e.description << " event";
+    os << e.description << " event";
+    if (e.card) os << ' ' << *e.card;
+    return os;
 }
