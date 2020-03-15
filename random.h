@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <iterator>
 #include <memory>
+#include <take.h>
 #include <til.h>
 #include <type_traits>
 #include <utility>
@@ -29,10 +30,7 @@ struct Random {
     Random& operator=(Random&&) noexcept = default;
 
     template <class C> auto deal(std::size_t n, const C& x) {
-        using X = std::decay_t<decltype(*std::begin(x))>;
-        std::vector<X> r = shuffle(x);
-        r.erase(r.begin() + std::min(n, r.size()), r.end());
-        return r;
+        return take(n, shuffle(x));
     }
 
     std::size_t roll(std::size_t n) {
