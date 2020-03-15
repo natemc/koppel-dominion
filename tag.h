@@ -12,7 +12,8 @@
 #include <iosfwd>
 
 enum Tag {
-    ACTION, TREASURE, VICTORY, ATTACK, REACTION, CURSE, END_TAGS
+    ACTION, TREASURE, VICTORY, ATTACK, REACTION, CURSE, BLOCK, DURATION,
+    END_TAGS
 };
 
 std::ostream& operator<<(std::ostream& os, Tag t);
