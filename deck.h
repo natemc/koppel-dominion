@@ -36,6 +36,7 @@ struct Deck {
     int         victory_points() const;
     Cards       whole         () const;
 
+    Cards aside;
     Cards discard_pile;
     Cards draw_pile;
     Cards hand;

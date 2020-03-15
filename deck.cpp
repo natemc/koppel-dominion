@@ -118,11 +118,13 @@ int Deck::victory_points() const {
 }
 
 Deck::Cards Deck::whole() const {
-    return over(concat, {draw_pile, discard_pile, hand, in_play});
+    return over(concat, {aside, draw_pile, discard_pile, hand, in_play});
 }
 
 std::ostream& operator<<(std::ostream& os, const Deck& deck) {
     print_cards(os << "Hand: "   , deck.hand        , deck) << "; ";
+    print_cards(os << "Aside: "  , deck.aside       , deck) << "; ";
+    print_cards(os << "In Play: ", deck.in_play     , deck) << "; ";
     print_cards(os << "Draw: "   , deck.draw_pile   , deck) << "; ";
     print_cards(os << "Discard: ", deck.discard_pile, deck);
     return os;
