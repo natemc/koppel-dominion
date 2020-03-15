@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <any.h>
 #include <append.h>
 #include <botui.h>
 #include <card.h>
@@ -11,6 +12,7 @@
 #include <deck.h>
 #include <each.h>
 #include <event.h>
+#include <except.h>
 #include <filter.h>
 #include <find.h>
 #include <find_if.h>
@@ -18,6 +20,7 @@
 #include <group.h>
 #include <iostream>
 #include <iterator>
+#include <join.h>
 #include <k.h>
 #include <key.h>
 #include <lambda.h>
@@ -90,19 +93,39 @@ namespace {
             }};
     }
 
-    // It's not clear to me what the correct behavior is when one of the other
-    // players has only a single card in his or her draw pile.  In this
-    // implementation, the player in question only reveals that single card.
-    // Perhaps they must shuffle their discard pile, put the single card on
-    // top, and then show 2 cards.  This action is used both in Bandit and
-    // Pirate Ship.
-    const Action reveal_top2{
-        "reveals the top 2 cards of their deck",
-        [](Game& g, Player& p) {
-            const auto top2 = take(2, p.deck.draw_pile);
-            for (auto& o: g.players) o->ui->show_cards(g, p, top2);
+    // Returns the players who did not block (i.e., play Moat)
+    std::vector<Player*> process_reactions(Game& g, Player& p) {
+        std::vector<Player*> blockers;
+        for (auto& o: filter(L1(x != &p), g.players)) {
+            auto reactions = filter(L1(x->is(REACTION)), o->deck.hand);
+            if (reactions.size()) {
+                o->ui->notify(g, *o, "Choose reaction(s)");
+                auto revealed = o->choose_cards(g, reactions);
+                for (auto& r: revealed) {
+                    for (auto q: g.players) q->ui->react(g, *o, *r);
+                    r->perform_reaction(g, *o);
+                }
+                if (any(L1(x->is(BLOCK)), revealed)) blockers.push_back(o);
+            }
         }
-    };
+        return filter(L1(x != &p), g.players) ^except^ blockers;
+    }
+
+    // The usual pattern for attack cards is
+    // 1) the player whose turn it is plays the attack card
+    // 2) the other players react; some may nullify the attack
+    // 3) the player who played the attack gets the gain effects
+    // 4) other players who did not block suffer the attack effects
+    Action gain_attack(Action gain, Action attack) {
+        return Action{
+            join("; ", {gain, attack}),
+            [=](Game& g, Player& p, const Card* c) {
+                const auto victims = process_reactions(g, p);
+                gain(g, p, c);
+                for (auto& o: victims) attack(g, *o, c);
+            }
+        };
+    }
 
     void to_deck(Player& player, const Card* card) {
         player.deck.put_on_top(card);
@@ -160,7 +183,7 @@ Action add_coins(int n) {
                   [=](Game& g, Player&){ g.turn.coins += n; }};
 }
 
-Action artisan_action{sequence_action({
+const Action artisan_action = sequence_action({
     gain_choice("Gain a card to your hand costing up to 5 Coins",
                 LNC1(x->cost <= 5), to_hand),
     {
@@ -173,17 +196,22 @@ Action artisan_action{sequence_action({
             }
         }
     }
-})};
+});
 
+// It's not clear to me what the correct behavior is when one of the other
+// players has only a single card in his or her draw pile.  In this
+// implementation, the player in question only reveals that single card.
+// Perhaps they must shuffle their discard pile, put the single card on
+// top, and then show 2 cards.
 Action bandit_action(const Card& gold, const Card& copper) {
-    return sequence_action({
+    return gain_attack(
         gain_card(&gold, "Gain a gold", to_discard_pile),
-        make_others(reveal_top2),
-        make_others({
-            "trashes a revealed Treasure other than Copper, and discards the"
-            " rest",
+        {
+            "Each other player reveals the top 2 cards of their deck, trashes"
+            " a revealed Treasure other than Copper, and discards the rest",
             [&](Game& g, Player& p) {
-                auto top2 = take(2, p.deck.draw_pile);
+                const auto top2 = take(2, p.deck.draw_pile);
+                for (auto& o: g.players) o->ui->show_cards(g, p, top2);
                 const auto non_copper_treasure =
                     filter(L1(x != &copper && x->is(TREASURE)), top2);
                 if (non_copper_treasure.empty())
@@ -194,30 +222,33 @@ Action bandit_action(const Card& gold, const Card& copper) {
                         p.choose_exactly(g, non_copper_treasure, 1));
                     p.deck.trash_from_draw_pile(chosen);
                     for (auto& o: g.players) o->ui->trash(g, p, {chosen});
-                    top2.erase(find(top2, chosen));
-                    p.deck.discard_from_draw_pile(top2);
+                    p.deck.discard_from_draw_pile(top2 ^except^ chosen);
                 }
             }
-    })});
+        });
 }
 
 Action bureaucrat_action(const Card& silver) {
-    return sequence_action({
+    return gain_attack(
         gain_card(&silver, "Gain a silver onto your deck", to_deck),
-        make_others({
-            "reveals a Victory card from their hand and puts it onto"
-            " their deck (or reveals a hand with no Victory cards)",
+        {
+            "Each other player reveals a Victory card from their hand and puts"
+            " it onto their deck (or reveals a hand with no Victory cards)",
             [](Game& g, Player& p) {
-                const auto it = find_if(L1(x->is(VICTORY)), p.deck.hand);
-                if (it == p.deck.hand.end())
-                    for (auto o: g.players) o->ui->show_cards(g, p, p.deck.hand);
-                else {
-                    for (auto o: g.players) o->ui->show_cards(g, p, {*it});
-                    p.deck.put_on_top(*it);
-                    p.deck.hand.erase(it);
+                for (auto& o: filter(L1(x != &p), g.players)) {
+                    const auto it = find_if(L1(x->is(VICTORY)), o->deck.hand);
+                    if (it == o->deck.hand.end()) {
+                        for (auto q: g.players)
+                            q->ui->show_cards(g, *o, o->deck.hand);
+                    }
+                    else {
+                        for (auto q: g.players) q->ui->show_cards(g, *o, {*it});
+                        p.deck.put_on_top(*it);
+                        p.deck.hand.erase(it);
+                    }
                 }
             }
-    })});
+        });
 }
 
 const Action cellar_action = {
@@ -230,29 +261,90 @@ const Action cellar_action = {
     }
 };
 
-const Action council_room_action{sequence_action({
+const Action council_room_action = sequence_action({
     add_cards(4),
-    make_others({"draws a card", [](Game&, Player& p){ p.deck.draw(); }})
-})};
+    {"Each other player draws a card", [](Game& g, Player& p) {
+        for (auto& o: filter(L1(x != &p), g.players)) o->deck.draw();
+    }}
+});
 
 Action descriptive_action(const std::string& description) {
     return {description, [](Game&,Player&){}};
 }
 
-const Action festival_action{sequence_action({
+const Action festival_action = sequence_action({
     add_actions(2), add_buys(1), add_coins(2)
-})};
+});
 
-const Action gardens_action{descriptive_action(
-    "Worth VP per 10 cards you have (round down)")};
+// TODO Now that we have a basic event system, rewrite the playing of cards
+// to be the scheduling of imminent events.  Then effects can be accomplished
+// by tinkering with the events stored in the event system.  For some effects
+// (e.g., the enchantress effect), this will require distinguishing instances
+// of the same card.  It's easy to create a game deck holding all the instances
+// and then continue to use raw pointers as observing pointers.  We will need
+// to fix all the places that currently check, e.g., whether a card is a Copper
+// by comparing it to the one true copper.  Using the name is the obvious
+// replacement.
 
-const Action harbinger_action{sequence_action({
+bool g_nullify = false; // Hack to be replaced by making card actions into events
+
+Event enchantress_event(const Card* card, Player& p, int turn) {
+    return Event{
+        card,
+        "[Enchantress] the first time each other player plays an Action card"
+        " on their turn, they get +1 Card and +1 Action instead of following"
+        " its instructions",
+        [&p,turn](const Game& g){ return g.turn.count > turn && g.turn.player == &p; },
+        [turn,t=turn,action=static_cast<const Card*>(nullptr)]
+            (const Game& g) mutable
+        {
+            if (t == turn) return false;
+            if (t < g.turn.count) action = nullptr;
+            t = g.turn.count;
+            if (g.turn.phase != Turn::ACTION || !g.turn.played || action)
+                return false;
+            action = g.turn.played;
+            return true;
+        },
+        [&p,card](Game& g) {
+            // How to squash the played card's action?
+            g.turn.player->deck.draw();
+            ++g.turn.actions;
+            g_nullify = true;
+            g.schedule(enchantress_event(card, p, g.turn.count));
+        }
+    };
+}
+
+Event enchantress_completion_event(const Card* card, Player& p, int turn) {
+    return Event{
+        card,
+        "[Enchantress] At the start of your next turn, +2 Cards",
+        K(false),
+        [&p,turn](const Game& g){ return g.turn.count > turn && g.turn.player == &p; },
+        [&](Game& g) { p.deck.draw(2); }
+    };
+}
+
+const Action enchantress_action = {
+    "Until your next turn, the first time each other player plays an Action"
+    " card on their turn, they get +1 Card and +1 Action instead of following"
+    " its instructions.  At the start of your next turn, +2 Cards.",
+    [](Game& g, Player& p, const Card* card) {
+        g.schedule(enchantress_event(card, p, g.turn.count));
+        g.schedule(enchantress_completion_event(card, p, g.turn.count));
+    }
+};
+
+const Action gardens_action = descriptive_action(
+    "Worth VP per 10 cards you have (round down)");
+
+const Action harbinger_action = sequence_action({
     add_cards(1), add_actions(1), {
         "Look through your discard pile.  You may put a card from it onto"
         " your deck.",
         [](Game& g, Player& p) {
             auto& dis = p.deck.discard_pile;
-            std::cout << "!!!!\n";
             if (auto chosen = p.choose_card(g, dis)) {
                 auto it = find(dis, chosen);
                 assert(it != std::end(dis));
@@ -261,11 +353,45 @@ const Action harbinger_action{sequence_action({
             }
         }
     }
-})};
+});
 
-const Action laboratory_action{sequence_action({
+const Action horse_traders_action = sequence_action({
+    add_buys(1), add_coins(3),
+    {"Discard 2 cards", [](Game& g, Player& p) {
+         if (std::size_t n = std::min(std::size_t{2}, p.deck.hand.size()))
+             p.deck.discard(p.choose_exactly(g, p.deck.hand, n));
+    }}
+});
+
+Event horse_traders_event(Player& p, const Card* card) {
+    return Event{
+        card,
+        "[Horse Traders] At the start of your next turn, +1 Card and return"
+        " your Horse Traders card to your hand",
+        K(false),
+        [&](const Game& g) { return g.turn.player == &p; },
+        [&p,card](Game& g) {
+            p.deck.draw(1);
+            p.deck.aside.erase(find(p.deck.aside, card));
+            p.deck.hand.push_back(card);
+        }
+    };
+}
+
+const Action horse_traders_reaction = {
+    "When another player plays an Attack card, you may first set this aside"
+    " from your hand.  If you do, then at the start of your next turn, +1 Card"
+    " and return this to your hand",
+    [](Game& g, Player& p, const Card* c) {
+        p.deck.hand.erase(find(p.deck.hand, c));
+        p.deck.aside.push_back(c);
+        g.schedule(horse_traders_event(p, c));
+    }
+};
+
+const Action laboratory_action = sequence_action({
     add_cards(1), add_actions(1)
-})};
+});
 
 const Action library_action = {
     "Draw until you have 7 cards in hand, skipping any Action cards"
@@ -281,15 +407,16 @@ const Action library_action = {
     }
 };
 
-const Action market_action{sequence_action({
+const Action market_action = sequence_action({
     add_cards(1), add_actions(1), add_buys(1), add_coins(1)
-})};
+});
 
-Event merchant_event(int turn, const Card& silver) {
+Event merchant_event(const Card* merchant, int turn, const Card& silver) {
     std::ostringstream os;
     os << "[Merchant] The first time you play a Silver this turn ("
        << turn << "), +1 Coin";
     return Event{
+        merchant,
         os.str(),
         [=](const Game& g){ return turn < g.turn.count; },
         [&](const Game& g){ return g.turn.played == &silver; },
@@ -298,29 +425,24 @@ Event merchant_event(int turn, const Card& silver) {
 }
 
 Action merchant_action(const Card& silver) {
-    // I'm cheating by taking advantage of the fact that, if you have a Silver,
-    // you're going to play it (in this implementation).
     return sequence_action({add_cards(1), add_actions(1), {
         "The first time you play a Silver this turn, +1 Coin",
-        [&](Game& g, Player& p) {
-              g.schedule(merchant_event(g.turn.count, silver));
-//            if (find(p.deck.hand, &silver) != std::end(p.deck.hand))
-//                ++g.turn.coins;
+        [&](Game& g, Player& p, const Card* c) {
+            g.schedule(merchant_event(c, g.turn.count, silver));
         }}});
 }
 
-const Action militia_action{sequence_action({
+const Action militia_action = gain_attack(
     add_cards(2),
-    make_others({
-        "discards down to 3 cards in hand",
+    {
+        "Each other player discards down to 3 cards in hand",
         [](Game& g, Player& p) {
             Deck::Cards& hand = p.deck.hand;
             if (hand.size() > 3) {
                 p.deck.discard(p.choose_exactly(g, hand, hand.size() - 3));
             }
         }
-    })
-})};
+});
 
 const Action mine_action = {
     "You may trash a Treasure card from your hand and gain a Treasure"
@@ -335,11 +457,12 @@ const Action mine_action = {
 };
 
 const Action moat_action = {
-    "+2 Cards; When another player plays an Attack"
-    " card, you may first reveal this from your hand,"
-    " to be unaffected by it.",
-    [](Game& g, Player& p){ p.deck.draw(2); }
+    "+2 Cards", [](Game& g, Player& p){ p.deck.draw(2); }
 };
+
+const Action moat_reaction = descriptive_action(
+    "When another player plays an Attack card, you may first reveal this from"
+    " your hand, to be unaffected by it.");
 
 Action money_lender_action(const Card& copper) {
     return {
@@ -372,16 +495,16 @@ const Action native_village_mat_to_hand = {
     }
 };
 
-const Action native_village_action{sequence_action({
+const Action native_village_action = sequence_action({
     add_cards(2),
     choice_action({native_village_top_card_to_mat,
                    native_village_mat_to_hand})
-})};
+});
 
 const Action nop_action{"", [](Game&,Player&){}};
 
 const Action pirate_ship_add_coins = {
-    "+1 per Coin token on your Pirate Ship mat",
+    "+1 Coin per Coin token on your Pirate Ship mat",
     [](Game& g, Player& p) {
         g.turn.coins += p.mats[Player::PIRATE_SHIP].coin_tokens;
     }
@@ -391,37 +514,47 @@ const Action pirate_ship_add_coins = {
 // The word "those" seems to refer to the revealed cards and so I implemented
 // this so that the instruction to trash only applies when a revealed card is
 // also a Treasure card.
-const Action pirate_ship_trash{
-    "trashes one of those Treasures that you choose, and discards the rest"
-    " and then if anyone trashed a Treasure you add a Coin Token to your"
-    " Pirate Ship mat",
-    [](Game& g, Player& p) {
-        bool trash = false;
-        for (auto& o: filter(L1(x != &p), g.players)) {
-            auto top2      = take(2, o->deck.draw_pile);
-            auto treasures = filter(L1(x->is(TREASURE)), top2);
-            auto chosen    = treasures.empty()? nullptr
-                                              : p.choose_card(g, treasures);
-            if (!chosen)
-                o->deck.discard_from_draw_pile(top2);
-            else {
-              trash = true;
-              o->deck.trash_from_draw_pile(chosen);
-              for (auto& o: g.players) o->ui->trash(g, p, {chosen});
-              top2.erase(find(top2, chosen));
-              o->deck.discard_from_draw_pile(top2);
+Action pirate_ship_trash(std::vector<Player*> victims) {
+    return Action{
+        "Each other player reveals the top 2 cards of their deck, trashes one of"
+        " those Treasures that you choose, and discards the rest, and then if"
+        " anyone trashed a Treasure you add a Coin token to your Pirate Ship mat",
+        [victims=std::move(victims)](Game& g, Player& p) {
+            bool trash = false;
+            for (auto& o: victims) {
+                const auto top2 = take(2, o->deck.draw_pile);
+                for (auto& q: g.players) q->ui->show_cards(g, *o, top2);
+                auto treasures = filter(L1(x->is(TREASURE)), top2);
+                if (treasures.empty())
+                    o->deck.discard_from_draw_pile(top2);
+                else {
+                    trash = true;
+                    auto chosen = p.choose_exactly(g, treasures, 1)[0];
+                    o->deck.trash_from_draw_pile(chosen);
+                    for (auto& q: g.players) q->ui->trash(g, *o, {chosen});
+                    o->deck.discard_from_draw_pile(top2 ^except^ chosen);
+                }
             }
-         }
-         if (trash) ++p.mats[Player::PIRATE_SHIP].coin_tokens;
-     }
+            if (trash) ++p.mats[Player::PIRATE_SHIP].coin_tokens;
+        }
+    };
+}
+
+const Action pirate_ship_action = {
+    "Choose one: +1 Coin per Coin token on your Pirate Ship mat; or each other"
+    " player reveals the top 2 cards of their deck, trashes one of those"
+    " Treasures that you choose, and discards the rest, and then if anyone"
+    " trashed a Treasure you add a Coin token to your Pirate Ship mat",
+    [](Game& g, Player& p, const Card* c) {
+        auto victims = process_reactions(g, p);
+        auto choice = choice_action({
+            pirate_ship_add_coins, pirate_ship_trash(std::move(victims))
+        });
+        choice(g, p, c);
+    }
 };
 
-const Action pirate_ship_action{choice_action({
-    pirate_ship_add_coins,
-    sequence_action({make_others(reveal_top2), pirate_ship_trash})
-})};
-
-const Action poacher_discard{
+const Action poacher_discard = {
     "Discard a card per empty Supply pile",
     [](Game& g, Player& p) {
         const auto how_many = std::min(p.deck.hand.size(),
@@ -430,9 +563,9 @@ const Action poacher_discard{
     }
 };
 
-const Action poacher_action{sequence_action({
+const Action poacher_action = sequence_action({
     add_cards(1), add_actions(1), add_coins(1), poacher_discard
-})};
+});
 
 const Action remodel_action = {
     "Trash a card from your hand; gain a card costing up to 2 Coins more than it",
@@ -445,7 +578,7 @@ const Action remodel_action = {
     }
 };
 
-const Action sentry_action{sequence_action({
+const Action sentry_action = sequence_action({
     add_cards(1), add_actions(1), {
         "Look at the top 2 cards of your deck.  Trash and/or discard any"
         " number of them.  Put the rest back on top in any order.",
@@ -476,7 +609,7 @@ const Action sentry_action{sequence_action({
             }
         }
     }
-})};
+});
 
 const Action throne_room_action = {
     "You may play an Action card from your hand twice",
@@ -485,9 +618,9 @@ const Action throne_room_action = {
         if (auto card = actions.empty()? nullptr : p.choose_card(g, actions)) {
             p.deck.play(card);
             for (auto& o: g.players) o->ui->play(g, p, *card);
-            card->action.perform(g, p);
+            card->perform_action(g, p);
             for (auto& o: g.players) o->ui->play(g, p, *card);
-            card->action.perform(g, p);
+            card->perform_action(g, p);
         }
     }
 };
@@ -501,29 +634,30 @@ Action trash_action(int n) {
     };
 }
 
-const Action vassal_action{
+const Action vassal_action = {
     "Discard the top card of your deck.  If it's an Action card, you may play it.",
     [](Game& g, Player& p) {
         const Card* const card = p.deck.next();
-        p.deck.discard_pile.push_back(card);
-        if (card->is(ACTION)) {
-            if (auto chosen = p.choose_card(g, {card}))
-                chosen->action.perform(g, p);
+        p.ui->show_cards(g, p, {card});
+        if (!card->is(ACTION) || !p.choose_card(g, {card}))
+            p.deck.discard_pile.push_back(card);
+        else {
+            p.deck.in_play.push_back(card);
+            for (auto& o: g.players) o->ui->play(g, p, *card);
+            card->perform_action(g, p);
         }
     }
 };
 
-const Action village_action{sequence_action({add_cards(1), add_actions(2)})};
+const Action village_action = sequence_action({add_cards(1), add_actions(2)});
 
 Action witch_action(const Card& curse) {
-    return sequence_action({
-        add_cards(2),
-        make_others(gain_card(&curse, "gains a Curse", to_discard_pile))
-    });
+    return gain_attack(add_cards(2),
+                       gain_card(&curse, "gains a Curse", to_discard_pile));
 }
 
-const Action workshop_action{gain_choice(
-    "Gain a card costing up to 4 Coins", LNC1(x->cost <= 4), to_deck)};
+const Action workshop_action = gain_choice(
+    "Gain a card costing up to 4 Coins", LNC1(x->cost <= 4), to_deck);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Cards
@@ -550,17 +684,21 @@ const Card bureaucrat    (bureaucrat_action(silver)  , "Bureaucrat"    , 4, 0, 0
 const Card cellar        (cellar_action              , "Cellar"        , 2, 0, 0, {ACTION});
 const Card chapel        (trash_action(4)            , "Chapel"        , 2, 0, 0, {ACTION});
 const Card council_room  (council_room_action        , "Council Room"  , 5, 0, 0, {ACTION});
+const Card enchantress   (enchantress_action         , "Enchantress"   , 3, 0, 0, {ACTION,ATTACK,DURATION});
 const Card festival      (festival_action            , "Festival"      , 5, 0, 0, {ACTION});
 const Card gardens       (gardens_action             , "Gardens"       , 4, 0, gardens_vp,
                                                                                   {VICTORY});
 const Card harbinger     (harbinger_action           , "Harbinger"     , 3, 0, 0, {ACTION});
+const Card horse_traders (horse_traders_action       , "Horse Traders" , 4, 0, 0, {ACTION,REACTION},
+                          horse_traders_reaction);
 const Card laboratory    (laboratory_action          , "Laboratory"    , 5, 0, 0, {ACTION});
 const Card library       (library_action             , "Library"       , 5, 0, 0, {ACTION});
 const Card market        (market_action              , "Market"        , 5, 0, 0, {ACTION});
 const Card merchant      (merchant_action(silver)    , "Merchant"      , 3, 0, 0, {ACTION});
 const Card militia       (militia_action             , "Militia"       , 4, 0, 0, {ACTION,ATTACK});
 const Card mine          (mine_action                , "Mine"          , 5, 0, 0, {ACTION});
-const Card moat          (moat_action                , "Moat"          , 2, 0, 0, {ACTION,REACTION});
+const Card moat          (moat_action                , "Moat"          , 2, 0, 0, {ACTION,REACTION,BLOCK},
+                          moat_reaction);
 const Card money_lender  (money_lender_action(copper), "Money Lender"  , 4, 0, 0, {ACTION});
 const Card native_village(native_village_action      , "Native Village", 2, 0, 0, {ACTION});
 const Card pirate_ship   (pirate_ship_action         , "Pirate Ship"   , 4, 0, 0, {ACTION,ATTACK});
@@ -575,12 +713,12 @@ const Card witch         (witch_action(curse)        , "Witch"         , 5, 0, 0
 const Card workshop      (workshop_action            , "Workshop"      , 3, 0, 0, {ACTION});
 
 const Card* const center_pile_cards[] = {
-    &artisan     , &bandit      , &bureaucrat    , &cellar     , &chapel    ,
-    &council_room, &festival    , &gardens       , &harbinger  , &laboratory,
-    &library     , &market      , &merchant      , &militia    , &mine      ,
-    &moat        , &money_lender, &native_village, &pirate_ship, &poacher   ,
-    &remodel     , &sentry      , &smithy        , &throne_room, &vassal    ,
-    &village     , &witch       , &workshop
+    &artisan      , &bandit     , &bureaucrat, &cellar      , &chapel        ,
+    &council_room , &enchantress, &festival  , &gardens     , &harbinger     ,
+    &horse_traders, &laboratory , &library   , &market      , &merchant      ,
+    &militia      , &mine       , &moat      , &money_lender, &native_village,
+    &pirate_ship  , &poacher    , &remodel   , &sentry      , &smithy        ,
+    &throne_room  , &vassal     , &village   , &witch       , &workshop
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -590,7 +728,7 @@ const Card* const center_pile_cards[] = {
 auto choose_random_action(Random* r) {
     return [=](const Game&                game,
                const Player&              player,
-               const std::vector<Action>& actions)
+               const std::vector<Action>& actions) -> const Action&
     {
         assert(0 < actions.size());
         return actions[r->roll(actions.size())];
@@ -677,15 +815,32 @@ init_piles(Random* r, std::size_t num_center_piles=10, int center_pile_depth=10)
     return piles;
 }
 
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " player\n";
-        return EXIT_FAILURE;
-    }
-    const char* const playername = argv[1];
-
+std::size_t random_seed() {
     std::random_device rd;
-    const auto seed = rd();
+    return rd();
+}
+
+int usage(const char* prog) {
+    std::cerr << "Usage: " << prog << " [-s seed] player\n";
+    return EXIT_FAILURE;
+}
+
+int main(int argc, char* argv[]) {
+    const char* playername = nullptr;
+    std::size_t seed       = random_seed();
+    for (int i = 1; i < argc; ++i) {
+        const char* const arg = argv[i];
+        if (arg[0] == '-') {
+            if (i == argc) return usage(argv[0]);
+            if (arg[1] != 's') return usage(argv[0]);
+            std::istringstream is(argv[++i]);
+            if (!(is >> seed)) return usage(argv[0]);
+        }
+        else if (!playername) playername = argv[i];
+        else return usage(argv[0]);
+    }
+    if (!playername) return usage(argv[0]);
+
     std::cout << "Random seed: " << seed << '\n';
     Random randgen{std::mt19937_64{seed}};
     BotUI bui;
@@ -711,7 +866,7 @@ int main(int argc, char* argv[]) {
         for (auto& o: g.players) o->ui->begin_turn(g, *o);
         g.process_events();
 
-        while (filter(L1(x->is(ACTION)), p.deck.hand).size() && g.turn.actions) {
+        while (any(L1(x->is(ACTION)), p.deck.hand) && g.turn.actions) {
             const Card* const action = p.ui->choose_action(g);
             if (!action) break;
             g.turn.played = action;
@@ -719,8 +874,9 @@ int main(int argc, char* argv[]) {
             // removed from the player's hand before the action happens.
             p.deck.play(action);
             for (auto& o: g.players) o->ui->play(g, p, *action);
-            (action->action).perform(g, p);
             g.process_events();
+            if (!g_nullify) action->perform_action(g, p);
+            g_nullify = false;
             p.ui->complete_action(g);
             --g.turn.actions;
         }
@@ -733,20 +889,21 @@ int main(int argc, char* argv[]) {
             g.turn.played = c;
             p.deck.play(c);
             for (auto& o: g.players) o->ui->play(g, p, *c);
-            g.turn.coins += c->treasure_points;
             g.process_events();
+            g.turn.coins += c->treasure_points;
         }
         while (g.turn.coins && g.turn.buys && g.affordable().size()) {
             const Card* const bought = p.ui->choose_buy(g, g.turn.coins);
             if (!bought) break;
             for (auto& o: g.players) o->ui->buy(g, p, *bought);
+            g.process_events();
             p.deck.discard_pile.push_back(bought);
             g.remove_card_from_piles(bought);
             g.turn.coins -= bought->cost;
             --g.turn.buys;
         }
-        p.deck.end_turn();
         g.process_events();
+        p.deck.end_turn();
         if (++it == std::end(g.players)) it = std::begin(g.players);
     }
     for (auto& p: g.players) p->ui->end_game(g);
