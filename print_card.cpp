@@ -10,14 +10,17 @@
 
 std::ostream& print_card(std::ostream& os, const Card& c, const Deck& d) {
     os << c.name << ' ';
-    for (Tag t: filter(L1(c.is(Tag(x))), each(L1(Tag(x)), til(END_TAGS))))
+    for (Tag t: filter(L1(c.is(x)), each(L1(Tag(x)), til(END_TAGS))))
         os << t;
     return os << " C" << c.cost << "|T" << c.treasure_points
               << "|V" << c.victory_points(d);
 }
 
 std::ostream& print_card_details(std::ostream& os, const Card& c, const Deck& d) {
-    return print_card(os, c, d) << ' ' << c.action.description;
+    print_card(os, c, d);
+    if (c.is(ACTION  )) os << ' '      << c.action  .description;
+    if (c.is(REACTION)) os << " ---- " << c.reaction.description;
+    return os;
 }
 
 std::ostream&
