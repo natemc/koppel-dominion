@@ -36,8 +36,14 @@ struct Card {
          std::initializer_list<Tag> tg);
     Card(Action a, const char* n, int c, int tp, vpcalc vp,
          std::initializer_list<Tag> tg);
+    Card(Action a, const char* n, int c, int tp, int vp,
+         std::initializer_list<Tag> tg, Action react);
+    Card(Action a, const char* n, int c, int tp, vpcalc vp,
+         std::initializer_list<Tag> tg, Action react);
 
-    bool is(Tag t) const;
+    bool is              (Tag t)          const;
+    void perform_action  (Game&, Player&) const;
+    void perform_reaction(Game&, Player&) const;
 
     Action                 action;
     std::string            name;
@@ -45,6 +51,7 @@ struct Card {
     std::bitset<END_TAGS>  tags;
     int                    treasure_points;
     vpcalc                 victory_points;
+    Action                 reaction;
 };
 
 std::ostream& operator<<(std::ostream& os, const Card& c);
