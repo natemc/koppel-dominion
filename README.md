@@ -8,22 +8,32 @@ The types representing the state of the game are the following records and enums
 ```
 Action
     description: string
-    perform    : (Game, Player) -> Game
+    perform    : (Game, Player, Card) -> Game
 
 Card
     action         : Action
     cost           : int
     name           : string
+    reaction       : Action
     tags           : set<Tag>
     treasure_points: int
     victory_points : Deck -> int
 
 Deck
+    aside          : [Card]
     discard_pile   : [Card]
     draw_pile      : stack<Card>
     hand           : [Card]
-    
+
+Event
+    card       : Card
+    description: string
+    expire     : Game -> bool
+    trigger    : Game -> bool
+    fire       : Game -> Game
+
 Game
+    events : [Event]
     players: [Player]
     piles  : map<Card, int>
     turn   : Turn
@@ -40,12 +50,13 @@ Player
     name         : string
     ui           : UI
 
-Tag = ACTION | TREASURE | VICTORY | ATTACK | REACTION | CURSE
+Tag = ACTION | TREASURE | VICTORY | ATTACK | REACTION | CURSE | BLOCK | DURATION
 
 Turn
     actions: int
     buys   : int
     coins  : int
+    count  : int
     phase  : ACTION | BUY
     played : Card?
     player : Player
@@ -64,7 +75,9 @@ UI
     choose_buy     : (Game, int) -> Card
     complete_action: Game -> unit
     end_game       : Game -> unit
+    gains          : (Game, Player, Card) -> unit
     no_more        : (Game, Player, Card) -> unit
+    notify         : (Game, Player, string) -> unit
     play           : (Game, Player, Card) -> unit
     react          : (Game, Player, Card) -> unit
     show_cards     : (Game, Player, [Card]) -> unit
@@ -81,7 +94,7 @@ Lastly, the `Action` and `Card` instances and the game loop - all the rules of t
 The following cards (see http://wiki.dominionstrategy.com/index.php/List_of_cards for the full list in the real game) are implemented:
 
 ```
-//         CARD           ACTION                       NAME           COST TP VP  TAGS
+//         CARD           ACTION (REACTION)            NAME           COST TP VP  TAGS
 // ---------------------------------------------------------------------------------------------
 const Card copper        (nop_action                 , "Copper"        , 0, 1, 0, {TREASURE});
 const Card gold          (nop_action                 , "Gold"          , 6, 3, 0, {TREASURE});
@@ -100,17 +113,21 @@ const Card bureaucrat    (bureaucrat_action(silver)  , "Bureaucrat"    , 4, 0, 0
 const Card cellar        (cellar_action              , "Cellar"        , 2, 0, 0, {ACTION});
 const Card chapel        (trash_action(4)            , "Chapel"        , 2, 0, 0, {ACTION});
 const Card council_room  (council_room_action        , "Council Room"  , 5, 0, 0, {ACTION});
+const Card enchantress   (enchantress_action         , "Enchantress"   , 3, 0, 0, {ACTION,ATTACK,DURATION});
 const Card festival      (festival_action            , "Festival"      , 5, 0, 0, {ACTION});
 const Card gardens       (gardens_action             , "Gardens"       , 4, 0, gardens_vp,
                                                                                   {VICTORY});
 const Card harbinger     (harbinger_action           , "Harbinger"     , 3, 0, 0, {ACTION});
+const Card horse_traders (horse_traders_action       , "Horse Traders" , 4, 0, 0, {ACTION,REACTION},
+                          horse_traders_reaction);                              
 const Card laboratory    (laboratory_action          , "Laboratory"    , 5, 0, 0, {ACTION});
 const Card library       (library_action             , "Library"       , 5, 0, 0, {ACTION});
 const Card market        (market_action              , "Market"        , 5, 0, 0, {ACTION});
 const Card merchant      (merchant_action(silver)    , "Merchant"      , 3, 0, 0, {ACTION});
 const Card militia       (militia_action             , "Militia"       , 4, 0, 0, {ACTION,ATTACK});
 const Card mine          (mine_action                , "Mine"          , 5, 0, 0, {ACTION});
-const Card moat          (moat_action                , "Moat"          , 2, 0, 0, {ACTION,REACTION});
+const Card moat          (moat_action                , "Moat"          , 2, 0, 0, {ACTION,REACTION,BLOCK},
+                          moat_reaction);                                       
 const Card money_lender  (money_lender_action(copper), "Money Lender"  , 4, 0, 0, {ACTION});
 const Card native_village(native_village_action      , "Native Village", 2, 0, 0, {ACTION});
 const Card pirate_ship   (pirate_ship_action         , "Pirate Ship"   , 4, 0, 0, {ACTION,ATTACK});
@@ -125,38 +142,32 @@ const Card witch         (witch_action(curse)        , "Witch"         , 5, 0, 0
 const Card workshop      (workshop_action            , "Workshop"      , 3, 0, 0, {ACTION});
 ```
 
-This set includes the cards from the game's Base set (2nd edition) plus `Native Village` and `Pirate Ship` from the Seaside edition.  Those last two were added at Jimmy's suggestion since he knew that they would require a lot of work :-).
+This set includes
+* The Base set (2nd edition)
+* `Native Village` and `Pirate Ship` (Seaside expansion).  These were added at Jimmy's suggestion to force the design to incorporate more complex state management.
+* `Enchantress` (Empires expansion).  This card requires very complex event handling; the current implementation is a complete hack and suggests that it may be worth thinking of the game as a whole as a CEP system.
+* `Horse Traders` (Cornucopia expansion).  This card requires event handling and it also has a complex reaction.
 
 A game pits a single human player against two bots (Mr Greedy, who's not that smart, and Lord Random, who is even less so).  The first player to reach 20 victory points wins.
 
 ## How actions are put together
-An action is a description and a function.  One relatively simple action is `workshop_action`:
+An action is a description and a function.  One relatively simple action is `moat_action`:
 ```
-const Action workshop_action = {
-    "Gain a card costing up to 4 Coins",
-    [](Game& g, Player& p) {
-        if (auto chosen = choose_card_to_gain(g, p, L1(x->cost <= 4)))
-            p.deck.put_on_top(chosen);
-    }
+const Action moat_action = {                                                    
+    "+2 Cards", [](Game& g, Player& p){ p.deck.draw(2); }                       
 };
 ```
-More complex actions can often be built out of other actions using the factory functions (declared in `action.h`) `sequence_action`, `choice_action`, and `make_others`:
+More complex actions can often be built out of other actions using the factory functions (declared in `action.h`) `sequence_action` and `choice_action`:
 ```
 const Action festival_action{sequence_action({
     add_actions(2), add_buys(1), add_coins(2)
 })};
 
-const Action pirate_ship_action{choice_action({
-    pirate_ship_add_coins,
-    sequence_action({pirate_ship_reveal, pirate_ship_trash})                                        
-})};
-
-Action witch_action(const Card& curse) {                                        
-    return sequence_action({                                                    
-        add_cards(2),                                                           
-        make_others(gain_card(&curse, "gains a Curse", to_discard_pile))       
-    });                                                                         
-}
+const Action native_village_action = sequence_action({                          
+    add_cards(2),                                                               
+    choice_action({native_village_top_card_to_mat,                              
+                   native_village_mat_to_hand})                                 
+});
 ```
 
 ## How to build
@@ -170,7 +181,11 @@ $
 ```
 
 ## How to run
-The executable, `dom`, takes a single command line argument which is required: the name of the human player.  Whenever input from the user is required, the game presents a menu and waits for input.  To illustrate, here is an abridged transcript from a game:
+The executable, `dom`, takes a single required command line argument: the name of the human player.  You may also pass an optional random seed argument via `-s seed` in order to replay a particular game.
+
+What the human player sees is printed to the terminal; the most important items are highlighted in various colors (not shown here).
+
+Whenever input from the user is required, the game presents a menu and waits for input.  To illustrate, here is an abridged transcript from a game:
 
 ```
 $ ./dom Me
@@ -405,16 +420,14 @@ It isn't clear, however, what the correct alternative design is.  Here are a few
 2. The `Player` class has some loose manner (e.g., map<string, any>) to store state.  Some convention would be established for code to work with this state.  This may not be different enough from the current solution to satisfy the mat haters, and I think it would be more error prone than the current solution.
 3. The actions for the relevant cards close over the state they share.  This approach leaves the problem of how to present this state to the user.  In dominion, a player may inspect the contents of his or her mats at any time (but not the contents of other players' mats).  Making state stored in actions available to the UI would be messy.
 
+So far, I haven't thought of a cure that isn't worse than the disease.
+
 ### Events
-When I claimed above that I implemented the Base (2nd edition) set of cards, I elided one little detail.  My implementation of the `Merchant` card does not behave as specified by the rules of the game, which state, "The first time you play a Silver this turn, +1 Coin."  Implementing this per the spec would mean that the game would need to trigger actions during the buy phase, which my implementation never does.  Moreover, this action (+1 Coin), though triggered by the playing of a card, is triggered by the playing of a card *other than the one requiring the action to take place*.
+My initial implementation of the `Merchant` card did not behave as specified by the rules of the game, which state, "The first time you play a Silver this turn, +1 Coin."  Implementing this correctly meant that the game needed to trigger actions during the buy phase, which my original implementation never did.  Moreover, this action (+1 Coin), though triggered by the playing of a card, is triggered by the playing of a card *other than the one requiring the action to take place*.  My first implementation simply checked whether the player of the `Merchant` card had a `Silver` in his or her hand and, if one was found, added a coin immediately.  Though usually correct, there are scenarios in which this is wrong.
 
-Time was short.  I consoled myself with the notion that anyone playing the `Merchant` card would surely follow it by playing a `Silver` card - if one was in his or her hand.  So, in this implementation, when you play a `Merchant` card, the game checks to see if you have any `Silver` cards in your hand; if you do, you get a coin immediately.  Who, when faced with this situation (except perhaps Lord Random), would not play a `Silver` card, and thereby gain the extra coin?
+This challenge is not limited to the `Merchant` card; some expansion packs include other cards (such as http://wiki.dominionstrategy.com/index.php/Horse_Traders and http://wiki.dominionstrategy.com/index.php/Enchantress) that have effects after the current player's turn ends.  This suggested a need for a general way to schedule behavior in the future.  I adding this feature to the game and implementing all three cards (`Merchant`, `Horse Traders`, and `Enchantress`) wasn't too bad.
 
-Someone, for example, who drew a `Mine` card due to the +1 Card feature of playing the `Merchant` card.  Such a player might well then use the additional action gained by playing the `Merchant` card to upgrade that `Silver` to a `Gold`.
-
-Moreover, it is also possible to play a `Merchant` card when there are no `Silver` cards in your hand.  It is possible the player subsequently plays an action card the leads to the player holding a `Silver` card.
-
-I could fix this particular situation with a particular solution, i.e., a hack.  But some expansion packs include other cards (such as http://wiki.dominionstrategy.com/index.php/Horse_Traders and http://wiki.dominionstrategy.com/index.php/Enchantress) that have effects after the current player's turn ends.  This suggests we need a general way to schedule actions in the future.  I would need to study the list of extant cards carefully to handle all the conditions under which such actions may be triggered.  Then Jimmy or one of my fellow students would invent a new card that would break my design, but I can live with that.
+However, my current `Enchantress` implementation is awful: it uses card-specific, global mutable state that the game's main loop knows about.  The `Enchantress` card shows that, in order to make all manner of things possible, a card may need to do more then just schedule events in the future.  We need to ability to remove and modify events that are scheduled but have not yet occurred.  This means that playing a card, instead of invoking an action or adding coins to the current players turn, should schedule events that we expect to occur immediately.
 
 ### Client-Server
 This would make a fun challenge.  Maybe one of my friends who writes phone apps would write a mobile client.
