@@ -1,5 +1,5 @@
 # koppel-dominion
-Design exercise for Koppel's Dojo (Feb 2020 cohort)
+This is a command-line version of the card game, [Dominion](https://en.wikipedia.org/wiki/Dominion_(card_game)), written as part of a design exercise for [Koppel's Dojo](https://jameskoppelcoaching.com/) (Feb 2020 cohort).
 
 ## High-level design
 
@@ -425,7 +425,7 @@ So far, I haven't thought of a cure that isn't worse than the disease.
 ### Events
 My initial implementation of the `Merchant` card did not behave as specified by the rules of the game, which state, "The first time you play a Silver this turn, +1 Coin."  Implementing this correctly meant that the game needed to trigger actions during the buy phase, which my original implementation never did.  Moreover, this action (+1 Coin), though triggered by the playing of a card, is triggered by the playing of a card *other than the one requiring the action to take place*.  My first implementation simply checked whether the player of the `Merchant` card had a `Silver` in his or her hand and, if one was found, added a coin immediately.  Though usually correct, there are scenarios in which this is wrong.
 
-This challenge is not limited to the `Merchant` card; some expansion packs include other cards (such as http://wiki.dominionstrategy.com/index.php/Horse_Traders and http://wiki.dominionstrategy.com/index.php/Enchantress) that have effects after the current player's turn ends.  This suggested a need for a general way to schedule behavior in the future.  I adding this feature to the game and implementing all three cards (`Merchant`, `Horse Traders`, and `Enchantress`) wasn't too bad.
+This challenge is not limited to the `Merchant` card; some expansion packs include other cards (such as http://wiki.dominionstrategy.com/index.php/Horse_Traders and http://wiki.dominionstrategy.com/index.php/Enchantress) that have effects after the current player's turn ends.  This suggested a need for a general way to schedule behavior in the future.  I added this feature to the game and implementing all three cards (`Merchant`, `Horse Traders`, and `Enchantress`) wasn't too bad.
 
 However, my current `Enchantress` implementation is awful: it uses card-specific, global mutable state that the game's main loop knows about.  The `Enchantress` card shows that, in order to make all manner of things possible, a card may need to do more then just schedule events in the future.  We need to ability to remove and modify events that are scheduled but have not yet occurred.  This means that playing a card, instead of invoking an action or adding coins to the current players turn, should schedule events that we expect to occur immediately.
 
